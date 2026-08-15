@@ -26,7 +26,7 @@ const PORT = process.env.PORT || 3000;
 const app = express();
 
 app.use(cors());
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json({ limit: "10mb" }));
 
 // 静态文件服务（前端 build 产物）
 app.use(express.static(path.join(__dirname, "../client/dist")));
@@ -95,13 +95,63 @@ async function getExistingFields(token, appToken, tableId) {
   return fields;
 }
 
+async function getAttachmentFieldId(token, appToken, tableId) {
+  const fields = await getExistingFields(token, appToken, tableId);
+  for (const [name, field] of fields.entries()) {
+    if (field.type === 17) return { name, fieldId: field.field_id };
+  }
+  return null;
+}
+
+async function uploadPdfToFeishu(token, pdfBase64, fileName, appToken) {
+  const buffer = Buffer.from(pdfBase64, "base64");
+  const url = `${FEISHU_BASE_URL}/drive/v1/files/upload_all`;
+  const formData = new URLSearchParams();
+  formData.append("file_name", fileName);
+  formData.append("parent_type", "bitable_file");
+  formData.append("parent_node", appToken);
+  formData.append("size", String(buffer.length));
+  formData.append("mime", "application/pdf");
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: Buffer.concat([
+      Buffer.from(
+        `--railway123\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: application/pdf\r\n\r\n`
+      ),
+      buffer,
+      Buffer.from("\r\n--railway123--\r\n"),
+    ]),
+  });
+
+  const data = await response.json();
+  if (!response.ok || (data.code !== undefined && data.code !== 0)) {
+    throw new Error(data.msg || "PDF upload failed");
+  }
+  return data.data?.file_token;
+}
+
+async function attachPdfToRecord(token, appToken, tableId, recordId, fieldId, fileToken, fileName) {
+  const url = `${FEISHU_BASE_URL}/bitable/v1/apps/${appToken}/tables/${tableId}/records/${recordId}/fields/${fieldId}/files`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: JSON.stringify({ file_token: fileToken }),
+  });
+  const data = await response.json();
+  if (!response.ok || (data.code !== undefined && data.code !== 0)) {
+    throw new Error(data.msg || "PDF attach failed");
+  }
+}
+
 // ============================================================
 // POST /api/submit
 // ============================================================
 
 app.post("/api/submit", async (req, res) => {
   try {
-    const { fieldValues } = req.body || {};
+    const { fieldValues, pdfBase64, pdfFileName } = req.body || {};
 
     if (!fieldValues || typeof fieldValues !== "object") {
       return res.status(400).json({ ok: false, error: "Invalid payload: fieldValues required" });
@@ -153,9 +203,26 @@ app.post("/api/submit", async (req, res) => {
       }
     );
 
+    const recordId = data.data?.record?.record_id || "";
+
+    // Step 5: 上传并附加 PDF（如果有）
+    if (pdfBase64 && pdfFileName && recordId) {
+      try {
+        const attachmentField = await getAttachmentFieldId(token, appToken, tableId);
+        if (attachmentField) {
+          const fileToken = await uploadPdfToFeishu(token, pdfBase64, pdfFileName, appToken);
+          await attachPdfToRecord(token, appToken, tableId, recordId, attachmentField.fieldId, fileToken, pdfFileName);
+          console.log(`[PDF] Attached ${pdfFileName} to record ${recordId}`);
+        }
+      } catch (pdfError) {
+        console.error("[/api/submit] PDF attachment error:", pdfError.message);
+        // PDF 失败不影响整体流程
+      }
+    }
+
     return res.json({
       ok: true,
-      recordId: data.data?.record?.record_id || "",
+      recordId,
       submittedFieldCount: Object.keys(filteredFields).length,
       skippedFieldCount: skippedCount,
     });
