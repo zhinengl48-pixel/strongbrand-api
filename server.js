@@ -86,6 +86,9 @@ async function getExistingFields(token, appToken, tableId) {
       { headers: { authorization: `Bearer ${token}` } }
     );
 
+    if (!data.data?.items) {
+      console.log("[getExistingFields] Response:", JSON.stringify(data).slice(0, 300));
+    }
     for (const field of data.data?.items || []) {
       if (field.field_name) fields.set(field.field_name, field);
     }
@@ -121,9 +124,15 @@ async function uploadPdfToFeishu(token, pdfBase64, fileName, appToken) {
     body: form,
   });
 
-  const data = await response.json();
+  const text = await response.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`Upload failed (${response.status}): ${text.slice(0, 200)}`);
+  }
   if (!response.ok || (data.code !== undefined && data.code !== 0)) {
-    throw new Error(data.msg || "PDF upload failed");
+    throw new Error(data.msg || `Upload failed: ${text.slice(0, 200)}`);
   }
   return data.data?.file_token;
 }
@@ -132,10 +141,16 @@ async function attachPdfToRecord(token, appToken, tableId, recordId, fieldId, fi
   const url = `${FEISHU_BASE_URL}/bitable/v1/apps/${appToken}/tables/${tableId}/records/${recordId}/fields/${fieldId}/files`;
   const response = await fetch(url, {
     method: "POST",
-    headers: { authorization: `Bearer ${token}` },
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     body: JSON.stringify({ file_token: fileToken }),
   });
-  const data = await response.json();
+  const text = await response.text();
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error(`Attach failed (${response.status}): ${text.slice(0, 200)}`);
+  }
   if (!response.ok || (data.code !== undefined && data.code !== 0)) {
     throw new Error(data.msg || "PDF attach failed");
   }
