@@ -1,0 +1,14 @@
+{
+  "name": "ai-assessment-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "思创客企业AI落地测评 - 服务端API",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "node-fetch": "^2.7.0"
+  }
+}
