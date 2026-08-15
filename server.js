@@ -106,23 +106,19 @@ async function getAttachmentFieldId(token, appToken, tableId) {
 async function uploadPdfToFeishu(token, pdfBase64, fileName, appToken) {
   const buffer = Buffer.from(pdfBase64, "base64");
   const url = `${FEISHU_BASE_URL}/drive/v1/files/upload_all`;
-  const formData = new URLSearchParams();
-  formData.append("file_name", fileName);
-  formData.append("parent_type", "bitable_file");
-  formData.append("parent_node", appToken);
-  formData.append("size", String(buffer.length));
-  formData.append("mime", "application/pdf");
+
+  const form = new FormData();
+  form.append("file_name", fileName);
+  form.append("parent_type", "bitable_file");
+  form.append("parent_node", appToken);
+  form.append("size", String(buffer.length));
+  form.append("mime", "application/pdf");
+  form.append("file", new Blob([buffer], { type: "application/pdf" }), fileName);
 
   const response = await fetch(url, {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
-    body: Buffer.concat([
-      Buffer.from(
-        `--railway123\r\nContent-Disposition: form-data; name="file"; filename="${fileName}"\r\nContent-Type: application/pdf\r\n\r\n`
-      ),
-      buffer,
-      Buffer.from("\r\n--railway123--\r\n"),
-    ]),
+    body: form,
   });
 
   const data = await response.json();
@@ -206,17 +202,24 @@ app.post("/api/submit", async (req, res) => {
     const recordId = data.data?.record?.record_id || "";
 
     // Step 5: 上传并附加 PDF（如果有）
+    let pdfAttached = false;
+    let pdfError = null;
     if (pdfBase64 && pdfFileName && recordId) {
       try {
         const attachmentField = await getAttachmentFieldId(token, appToken, tableId);
         if (attachmentField) {
+          console.log(`[PDF] Found attachment field: ${attachmentField.name} (${attachmentField.fieldId})`);
           const fileToken = await uploadPdfToFeishu(token, pdfBase64, pdfFileName, appToken);
+          console.log(`[PDF] Uploaded, token: ${fileToken}`);
           await attachPdfToRecord(token, appToken, tableId, recordId, attachmentField.fieldId, fileToken, pdfFileName);
           console.log(`[PDF] Attached ${pdfFileName} to record ${recordId}`);
+          pdfAttached = true;
+        } else {
+          pdfError = "No attachment field found in table";
         }
-      } catch (pdfError) {
-        console.error("[/api/submit] PDF attachment error:", pdfError.message);
-        // PDF 失败不影响整体流程
+      } catch (err) {
+        pdfError = err.message;
+        console.error("[/api/submit] PDF attachment error:", err.message);
       }
     }
 
@@ -225,6 +228,8 @@ app.post("/api/submit", async (req, res) => {
       recordId,
       submittedFieldCount: Object.keys(filteredFields).length,
       skippedFieldCount: skippedCount,
+      pdfAttached,
+      pdfError,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
