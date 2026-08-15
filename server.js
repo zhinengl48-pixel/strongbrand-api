@@ -137,12 +137,16 @@ async function uploadPdfToFeishu(token, pdfBase64, fileName, appToken) {
   return data.data?.file_token;
 }
 
-async function attachPdfToRecord(token, appToken, tableId, recordId, fieldId, fileToken, fileName) {
-  const url = `${FEISHU_BASE_URL}/bitable/v1/apps/${appToken}/tables/${tableId}/records/${recordId}/fields/${fieldId}/files`;
+async function attachPdfToRecord(token, appToken, tableId, recordId, fieldName, fileToken, fileName, fileSize) {
+  const url = `${FEISHU_BASE_URL}/bitable/v1/apps/${appToken}/tables/${tableId}/records/${recordId}`;
   const response = await fetch(url, {
-    method: "POST",
+    method: "PUT",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ file_token: fileToken }),
+    body: JSON.stringify({
+      fields: {
+        [fieldName]: [{ file_token: fileToken, name: fileName, size: fileSize }],
+      },
+    }),
   });
   const text = await response.text();
   let data;
@@ -225,8 +229,9 @@ app.post("/api/submit", async (req, res) => {
         if (attachmentField) {
           console.log(`[PDF] Found attachment field: ${attachmentField.name} (${attachmentField.fieldId})`);
           const fileToken = await uploadPdfToFeishu(token, pdfBase64, pdfFileName, appToken);
-          console.log(`[PDF] Uploaded, token: ${fileToken}`);
-          await attachPdfToRecord(token, appToken, tableId, recordId, attachmentField.fieldId, fileToken, pdfFileName);
+          const pdfSize = Buffer.from(pdfBase64, "base64").length;
+          console.log(`[PDF] Uploaded, token: ${fileToken}, size: ${pdfSize}`);
+          await attachPdfToRecord(token, appToken, tableId, recordId, attachmentField.name, fileToken, pdfFileName, pdfSize);
           console.log(`[PDF] Attached ${pdfFileName} to record ${recordId}`);
           pdfAttached = true;
         } else {
